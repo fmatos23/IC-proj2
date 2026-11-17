@@ -1,0 +1,11 @@
+bin/
+build/
+out/
+*.o
+__pycache__/
+
+# Course material (eLearning) - not redistributed in the public repo
+trab2.pdf
+imgs-pgm8/
+imgs-ppm/
+imgs-raw16/
