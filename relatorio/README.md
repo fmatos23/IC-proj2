@@ -118,6 +118,8 @@ Entropia em bits/amostra: H(x) dos valores, H(dₕ) das diferenças horizontais,
 - **3.5 Imagens de 16 bpp:** particularidades do RAW (byte order, gama efetiva, ruído).
 - **3.6 Resultados:** bpp médio por conjunto de imagens, tempo de codificação/descodificação e memória máxima.
 - **3.7 Comparação:** com JPEG-LS, JPEG-XL (modo sem perdas), PNG/OptiPNG, zstd, xz/lzma, bzip2. Tabela de bpp, tempo e memória e gráfico bpp vs tempo.
+  - 🟡 Referências já medidas com `scripts/benchmark_sota.py` (`results/`). Repetir na máquina final para os tempos do relatório.
+  - As imagens Kodak (`*.256.ppm`) têm só 256 cores (paleta): JPEG-LS fica em ~12.8 bpp e bzip2/PNG/JPEG-XL e7 em ~4 bpp. O codec precisa de detetar imagens com poucas cores.
 - Metodologia de medição: `/usr/bin/time -v` para tempo e memória (max RSS), média de várias execuções, máquina usada.
 
 ### 4. Codec com perdas (Parte III)

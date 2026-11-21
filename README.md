@@ -93,6 +93,29 @@ Prints, per channel and overall, the maximum absolute error, the MSE and the
 bin/img_cmp imgs-ppm/lena.ppm lena_4bit.ppm
 ```
 
+## Part II.5: lossless state-of-the-art benchmark
+
+`scripts/benchmark_sota.py` compresses every test image with existing lossless
+codecs and measures bpp, encoding/decoding time and peak memory (single thread),
+checking that decoding is exact. Results go to `results/sota_<host>.{csv,md}`.
+
+| Codec | Tool | Applied to |
+|---|---|---|
+| JPEG-LS | CharLS through `bin/charls_cli` (Ubuntu has the library, not a CLI) | PNM |
+| JPEG-XL lossless | `cjxl -d 0 -e 1/3/7/9` | PNM |
+| PNG | `optipng -o2` (decoded with `pngtopnm`) | PNM |
+| zstd / xz / bzip2 | `zstd -19`, `xz -9`, `bzip2 -9` | original file |
+
+16-bit RAW images are converted to 16-bit PGM for the image codecs, and the
+gzipped Kodak images (`imgs-ppm/kodak/`) are decompressed first.
+
+```sh
+sudo apt install libcharls-dev libjxl-tools optipng netpbm zstd xz-utils bzip2 time
+make bench                                         # all images, 3 runs each (slow: JPEG-XL -e 9)
+python3 scripts/benchmark_sota.py --skip-slow      # without JPEG-XL -e 9
+python3 scripts/benchmark_sota.py --groups pgm8 ppm --repeat 1
+```
+
 ## Repository layout
 
 ```
@@ -102,4 +125,7 @@ src/img_quant.cpp            Part I.2
 src/img_cmp.cpp              Part I.3
 scripts/img_hist_plot.py     plotting helper called by img_hist (copied to bin/)
 tests/run_tests.sh           sanity tests (make test)
+tools/charls_cli.cpp         JPEG-LS command line front-end (benchmark only)
+scripts/benchmark_sota.py    Part II.5 benchmark of existing codecs
+results/                     benchmark results
 ```
