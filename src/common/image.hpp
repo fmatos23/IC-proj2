@@ -32,6 +32,8 @@ struct Image {
     int bpp = 8;             // bits of the on-disk sample container (8 or 16)
     uint32_t maxval = 255;   // largest representable sample value
     bool bigEndian = true;   // byte order of 16 bpp RAW files (PNM is always BE)
+    bool ascii = false;      // PNM stored as text (P2/P3)
+    size_t rasterOffset = 0; // binary files: bytes before the first sample (PNM header)
     std::vector<uint16_t> data;
 
     size_t numPixels() const { return static_cast<size_t>(width) * height; }
@@ -55,6 +57,22 @@ struct Image {
 // Reads an image. If raw.given() the file is interpreted as RAW (single
 // channel); otherwise the PNM header is parsed.
 Image readImage(const std::string& path, const RawParams& raw);
+
+// Same as readImage, for a file already in memory.
+Image parseImage(const std::vector<uint8_t>& file, const RawParams& raw);
+
+// Same, but for binary files the samples are not decoded (img.data stays
+// empty; the samples are at file[img.rasterOffset...]). ASCII PNM files are
+// read completely.
+Image parseImageHeader(const std::vector<uint8_t>& file, const RawParams& raw);
+
+// Whole-file helpers.
+std::vector<uint8_t> readFileBytes(const std::string& path);
+void writeFileBytes(const std::string& path, const std::vector<uint8_t>& buf);
+
+// The samples of img as stored on disk in binary form (no header): 1 or 2
+// bytes per sample, big-endian except for little-endian RAW files.
+std::vector<uint8_t> encodeRaster(const Image& img);
 
 // Writes an image in its own format (img.format). PNM files are written in
 // binary form (P5/P6), with big-endian samples when maxval > 255.

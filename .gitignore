@@ -1,3 +1,4 @@
+# Build
 bin/
 build/
 out/
@@ -9,3 +10,11 @@ trab2.pdf
 imgs-pgm8/
 imgs-ppm/
 imgs-raw16/
+
+# Files delivered by Claude (zips), not part of the project
+Claude outputs/
+
+# Temporary files from tests / experiments
+*.c.tmp
+/tmp/
+*.icl

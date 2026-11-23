@@ -43,7 +43,7 @@ std::string Image::channelName(int ch) const {
 // ---------------------------------------------------------------------------
 // File helpers
 
-static std::vector<uint8_t> readFile(const std::string& path) {
+std::vector<uint8_t> readFileBytes(const std::string& path) {
     FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) throw std::runtime_error("cannot open '" + path + "': " + std::strerror(errno));
     std::fseek(f, 0, SEEK_END);
@@ -60,7 +60,7 @@ static std::vector<uint8_t> readFile(const std::string& path) {
     return buf;
 }
 
-static void writeFile(const std::string& path, const std::vector<uint8_t>& buf) {
+void writeFileBytes(const std::string& path, const std::vector<uint8_t>& buf) {
     FILE* f = std::fopen(path.c_str(), "wb");
     if (!f) throw std::runtime_error("cannot create '" + path + "': " + std::strerror(errno));
     size_t put = std::fwrite(buf.data(), 1, buf.size(), f);
@@ -104,7 +104,7 @@ uint32_t readUInt(Cursor& c, const char* what) {
 }
 }  // namespace
 
-static Image readPNM(const std::vector<uint8_t>& buf) {
+static Image readPNM(const std::vector<uint8_t>& buf, bool withSamples) {
     if (buf.size() < 2 || buf[0] != 'P')
         throw std::runtime_error("not a PGM/PPM file (for RAW images give -rows/-cols)");
     char m = static_cast<char>(buf[1]);
@@ -132,9 +132,10 @@ static Image readPNM(const std::vector<uint8_t>& buf) {
     img.bigEndian = true;
 
     const size_t n = img.numSamples();
-    img.data.resize(n);
 
     if (ascii) {
+        img.data.resize(n);
+        img.ascii = true;
         for (size_t i = 0; i < n; ++i) {
             uint32_t v = readUInt(c, "sample");
             if (v > img.maxval) throw std::runtime_error("sample exceeds maxval");
@@ -147,8 +148,11 @@ static Image readPNM(const std::vector<uint8_t>& buf) {
     if (c.p >= buf.size() || !std::isspace(buf[c.p]))
         throw std::runtime_error("malformed PNM header");
     ++c.p;
+    img.rasterOffset = c.p;
     const size_t bps = img.bpp / 8;
     if (buf.size() - c.p < n * bps) throw std::runtime_error("truncated PNM raster");
+    if (!withSamples) return img;
+    img.data.resize(n);
     const uint8_t* src = buf.data() + c.p;
     if (bps == 1) {
         for (size_t i = 0; i < n; ++i) img.data[i] = src[i];
@@ -159,7 +163,7 @@ static Image readPNM(const std::vector<uint8_t>& buf) {
     return img;
 }
 
-static Image readRAW(const std::vector<uint8_t>& buf, const RawParams& raw) {
+static Image readRAW(const std::vector<uint8_t>& buf, const RawParams& raw, bool withSamples) {
     if (raw.rows <= 0 || raw.cols <= 0)
         throw std::runtime_error("RAW images need both -rows and -cols");
     if (raw.bpp != 8 && raw.bpp != 16) throw std::runtime_error("RAW -bpp must be 8 or 16");
@@ -181,6 +185,7 @@ static Image readRAW(const std::vector<uint8_t>& buf, const RawParams& raw) {
     if (buf.size() > n * bps)
         std::cerr << "warning: RAW file has " << buf.size() - n * bps << " trailing bytes (ignored)\n";
 
+    if (!withSamples) return img;
     img.data.resize(n);
     const uint8_t* src = buf.data();
     if (bps == 1) {
@@ -195,15 +200,20 @@ static Image readRAW(const std::vector<uint8_t>& buf, const RawParams& raw) {
     return img;
 }
 
-Image readImage(const std::string& path, const RawParams& raw) {
-    std::vector<uint8_t> buf = readFile(path);
-    return raw.given() ? readRAW(buf, raw) : readPNM(buf);
+Image parseImage(const std::vector<uint8_t>& file, const RawParams& raw) {
+    return raw.given() ? readRAW(file, raw, true) : readPNM(file, true);
 }
 
-void writeImage(const std::string& path, const Image& img) {
-    if (img.data.size() != img.numSamples()) throw std::runtime_error("image buffer size mismatch");
+Image parseImageHeader(const std::vector<uint8_t>& file, const RawParams& raw) {
+    return raw.given() ? readRAW(file, raw, false) : readPNM(file, false);
+}
 
-    std::vector<uint8_t> out;
+Image readImage(const std::string& path, const RawParams& raw) {
+    return parseImage(readFileBytes(path), raw);
+}
+
+// Appends the binary samples of img to out.
+static void appendRaster(const Image& img, std::vector<uint8_t>& out) {
     size_t bps;
     bool be = true;
     if (img.format == Format::RAW) {
@@ -211,10 +221,6 @@ void writeImage(const std::string& path, const Image& img) {
         be = img.bigEndian;
     } else {
         bps = img.maxval < 256 ? 1 : 2;
-        char hdr[64];
-        int len = std::snprintf(hdr, sizeof hdr, "P%c\n%d %d\n%u\n",
-                                img.format == Format::PGM ? '5' : '6', img.width, img.height, img.maxval);
-        out.assign(hdr, hdr + len);
     }
     const size_t base = out.size();
     out.resize(base + img.numSamples() * bps);
@@ -233,7 +239,26 @@ void writeImage(const std::string& path, const Image& img) {
             dst[2 * i + 1] = static_cast<uint8_t>(img.data[i] >> 8);
         }
     }
-    writeFile(path, out);
+}
+
+std::vector<uint8_t> encodeRaster(const Image& img) {
+    if (img.data.size() != img.numSamples()) throw std::runtime_error("image buffer size mismatch");
+    std::vector<uint8_t> out;
+    appendRaster(img, out);
+    return out;
+}
+
+void writeImage(const std::string& path, const Image& img) {
+    if (img.data.size() != img.numSamples()) throw std::runtime_error("image buffer size mismatch");
+    std::vector<uint8_t> out;
+    if (img.format != Format::RAW) {
+        char hdr[64];
+        int len = std::snprintf(hdr, sizeof hdr, "P%c\n%d %d\n%u\n",
+                                img.format == Format::PGM ? '5' : '6', img.width, img.height, img.maxval);
+        out.assign(hdr, hdr + len);
+    }
+    appendRaster(img, out);
+    writeFileBytes(path, out);
 }
 
 // ---------------------------------------------------------------------------
