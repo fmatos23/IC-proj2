@@ -166,6 +166,29 @@ Tentado sem ganho que justificasse (removido do código): modelos separados nas 
 1 de 5 imagens), o preditor MED nos canais de cor (ajuda nas JPEG, piora na cadeira), o 3.º
 modelo também nos bits de classe (+0,15% de ganho por ~10% de tempo).
 
+## 4d. Benchmark final no PC do Duarte (imagens da cadeira)
+
+`results/sota_pc-do-duarte.md`: AMD Ryzen 7 6800H (16 threads), Ubuntu 24.04, cjxl 0.7.0, CharLS 2.4.2.
+598 medições, todas sem perdas.
+
+- **bpp:** iguais aos da VM em todos os codecs de uma thread (o codec é determinístico). Diferem só
+  o `ours-mt` (usa 16 faixas, uma por thread) e o PNG, por milésimas (outra versão do `pnmtopng`).
+- **Resultado global (46 imagens), média geométrica face ao JPEG-LS:**
+
+| Codec | vs JPEG-LS | vitórias | cod. Mpix/s | desc. Mpix/s | memória máx. cod./desc. (MB) |
+|---|---|---|---|---|---|
+| **nosso** | **−54,4%** | 35/46 | 1,68 | 3,32 | 35 / 28 |
+| nosso `-fast` | −54,0% | | 2,31 | 4,55 | 36 / 28 |
+| nosso `-t 16` | −52,2% | | 2,87 | 18,83 | 137 / 135 |
+| JPEG-XL e7 | −45,3% | 0/46 | 1,11 | 7,69 | 694 / 156 |
+| JPEG-XL e9 | −48,8% | 10/46 | 0,08 | 7,92 | 719 / 156 |
+| JPEG-LS | 0% | 0/46 | 13,87 | 17,98 | 56 / 46 |
+
+- **Honestamente:** comprimimos mais do que todos e codificamos mais depressa do que o JPEG-XL e7,
+  com 5–20× menos memória; mas **descodificamos 2,3× mais devagar do que o e7** (PPM: 1,55 contra
+  3,88 Mpix/s) e 5× mais devagar do que o JPEG-LS. Com 16 faixas a descodificação passa à frente
+  do JPEG-XL (18,8 Mpix/s), mas perde ~2 pontos de compressão e só ajuda se contarem tempo real.
+
 ## 5. O que isto quer dizer para a avaliação
 
 - Taxa de compressão: muito boa. Ao nível do JPEG-XL e7–e9 e muito acima do JPEG-LS, PNG
