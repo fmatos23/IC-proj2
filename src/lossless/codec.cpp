@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <numeric>
 #include <stdexcept>
 
 #include "lossless/crc32.hpp"
@@ -25,7 +26,7 @@ namespace ic {
 
 namespace {
 
-constexpr uint8_t kVersion = 3;
+constexpr uint8_t kVersion = 4;
 enum Mode : uint8_t { kModeImage = 0, kModeBytes = 1, kModeStored = 2 };
 
 // ---------------------------------------------------------------------------
@@ -874,17 +875,27 @@ struct Source {
     }
 };
 
-// Builds row r of the planes that are coded: colour transform t and, for
-// packed grey images, the rank of each value.
+// Builds row r of the planes that are coded: value scaling (v -> (v - off) /
+// step, per channel), colour transform t and, for packed grey images, the rank
+// of each value.
 struct RowMaker {
     const Source* src = nullptr;
     int t = kNone;
     const std::vector<int32_t>* rank = nullptr;  // packed: value - packMin -> rank
     int packMin = 0;
+    int step[3] = {1, 1, 1}, off[3] = {0, 0, 0};
+    bool scaled = false;
     void operator()(int r, int32_t* out) const {
         thread_local std::vector<uint16_t> tmp;
         tmp.resize(static_cast<size_t>(src->W) * src->C);
         src->row(r, tmp.data());
+        if (scaled) {
+            const size_t m = static_cast<size_t>(src->W) * src->C;
+            for (size_t k = 0; k < m; ++k) {
+                const int ch = static_cast<int>(k % src->C);
+                tmp[k] = static_cast<uint16_t>((tmp[k] - off[ch]) / step[ch]);
+            }
+        }
         forwardTransform(t, src->C, tmp.data(), out, static_cast<size_t>(src->W));
         if (rank)
             for (int x = 0; x < src->W; ++x) out[x] = (*rank)[static_cast<size_t>(out[x] - packMin)];
@@ -1051,8 +1062,30 @@ static std::vector<uint8_t> encodeModel(const std::vector<uint8_t>& file, uint32
     src.C = img.channels;
     src.bps = img.bpp / 8;
     src.be = img.bigEndian;
-    for (size_t i = 0; i < src.n(); ++i)
-        if (src.at(i) > img.maxval) return encodeBytesMode(file, crc, st, "samples above maxval");
+    // Value scaling: if all the values of a channel are off + k * step (e.g.
+    // 12-bit data stored in the top bits of 16-bit samples), code k instead.
+    int step[3] = {1, 1, 1}, off[3] = {0, 0, 0};
+    {
+        int first[3] = {-1, -1, -1}, g[3] = {0, 0, 0};
+        for (size_t i = 0; i < src.n(); ++i) {
+            const int v = src.at(i), ch = static_cast<int>(i % src.C);
+            if (static_cast<uint32_t>(v) > img.maxval) return encodeBytesMode(file, crc, st, "samples above maxval");
+            if (first[ch] < 0) first[ch] = v;
+            else if (g[ch] != 1) g[ch] = std::gcd(g[ch], std::abs(v - first[ch]));
+        }
+        for (int ch = 0; ch < src.C; ++ch)
+            if (g[ch] > 1) {
+                step[ch] = g[ch];
+                off[ch] = first[ch] % g[ch];
+            }
+    }
+    const bool scaled = step[0] > 1 || step[1] > 1 || step[2] > 1;
+    uint32_t codedMax = img.maxval;  // largest value after the scaling
+    if (scaled) {
+        codedMax = 0;
+        for (int ch = 0; ch < src.C; ++ch)
+            codedMax = std::max(codedMax, (img.maxval - static_cast<uint32_t>(off[ch])) / static_cast<uint32_t>(step[ch]));
+    }
     // The samples are coded exactly as they are stored (1 or 2 bytes, same byte
     // order), so header + samples + trailer rebuild the file byte for byte.
     const size_t hdr = img.rasterOffset, end = hdr + src.n() * src.bps;
@@ -1083,6 +1116,11 @@ static std::vector<uint8_t> encodeModel(const std::vector<uint8_t>& file, uint32
     pl.match = 0;  // decided below
     RowMaker mk;
     mk.src = &src;
+    mk.scaled = scaled;
+    for (int ch = 0; ch < 3; ++ch) {
+        mk.step[ch] = step[ch];
+        mk.off[ch] = off[ch];
+    }
     const std::vector<int> rows = sampleRows(img.width, img.height);
     int best = kNone;
     if (img.channels == 3) {
@@ -1097,7 +1135,7 @@ static std::vector<uint8_t> encodeModel(const std::vector<uint8_t>& file, uint32
                 break;
             }
             mk.t = t;
-            transformRange(t, 3, static_cast<int>(img.maxval), pl.lo, pl.hi);
+            transformRange(t, 3, static_cast<int>(codedMax), pl.lo, pl.hi);
             computeGradShiftRows(pl, mk);
             sampleRowsPlanes(pl, mk, rows, sp);
             CostCoder cc;
@@ -1109,7 +1147,7 @@ static std::vector<uint8_t> encodeModel(const std::vector<uint8_t>& file, uint32
         }
     }
     mk.t = best;
-    transformRange(best, img.channels, static_cast<int>(img.maxval), pl.lo, pl.hi);
+    transformRange(best, img.channels, static_cast<int>(codedMax), pl.lo, pl.hi);
     computeGradShiftRows(pl, mk);
 
     // Value packing (grey images): if only some of the values between the
@@ -1121,9 +1159,9 @@ static std::vector<uint8_t> encodeModel(const std::vector<uint8_t>& file, uint32
     std::vector<uint8_t> packMap;
     std::vector<int32_t> packRank;
     if (img.channels == 1 && (!std::getenv("IC_PACK") || std::atoi(std::getenv("IC_PACK")) != 0)) {
-        std::vector<uint32_t> hist(static_cast<size_t>(img.maxval) + 1, 0);
-        for (size_t i = 0; i < src.n(); ++i) ++hist[src.at(i)];
-        int mn = 0, mx = static_cast<int>(img.maxval);
+        std::vector<uint32_t> hist(static_cast<size_t>(codedMax) + 1, 0);
+        for (size_t i = 0; i < src.n(); ++i) ++hist[static_cast<size_t>((src.at(i) - off[0]) / step[0])];
+        int mn = 0, mx = static_cast<int>(codedMax);
         while (mn < mx && !hist[mn]) ++mn;
         while (mx > mn && !hist[mx]) --mx;
         const int span = mx - mn + 1;
@@ -1207,6 +1245,12 @@ static std::vector<uint8_t> encodeModel(const std::vector<uint8_t>& file, uint32
     put(out, static_cast<uint32_t>(best), 1);
     put(out, usePalette ? pal.size() : 0, 2);
     for (int ch = 0; ch < 3; ++ch) put(out, static_cast<uint32_t>(ch < pl.C ? pl.gshift[ch] : 0), 1);
+    put(out, scaled && !usePalette ? 1 : 0, 1);
+    if (scaled && !usePalette)
+        for (int ch = 0; ch < 3; ++ch) {
+            put(out, static_cast<uint32_t>(step[ch]), 2);
+            put(out, static_cast<uint32_t>(off[ch]), 2);
+        }
     put(out, usePack ? 1 : 0, 1);
     if (usePack) {
         put(out, static_cast<uint32_t>(packMin), 4);
@@ -1274,6 +1318,11 @@ static std::vector<uint8_t> encodeModel(const std::vector<uint8_t>& file, uint32
                     : img.channels == 3 ? std::string("image, predictive, colour transform ") + transformName(best)
                                         : std::string("image, predictive"));
         if (!usePalette && pl.match) st->mode += ", match model";
+        if (!usePalette && scaled) {
+            st->mode += ", values scaled (step";
+            for (int ch = 0; ch < img.channels; ++ch) st->mode += " " + std::to_string(step[ch]);
+            st->mode += ")";
+        }
         st->description = img.describe();
         st->channelBits = chanBits;
         st->otherBits = other;
@@ -1335,12 +1384,28 @@ std::vector<uint8_t> losslessDecode(const std::vector<uint8_t>& comp, CodecStats
             g = static_cast<int>(rd.get(1));
             if (g > 16) throw std::runtime_error("corrupted header");
         }
+        const bool scaled = rd.get(1) != 0;
+        int step[3] = {1, 1, 1}, off[3] = {0, 0, 0};
+        uint32_t codedMax = img.maxval;
+        if (scaled) {
+            if (K > 0) throw std::runtime_error("corrupted header");
+            codedMax = 0;
+            for (int ch = 0; ch < 3; ++ch) {
+                step[ch] = static_cast<int>(rd.get(2));
+                off[ch] = static_cast<int>(rd.get(2));
+                if (step[ch] < 1 || off[ch] >= step[ch] || static_cast<uint32_t>(off[ch]) > img.maxval)
+                    throw std::runtime_error("corrupted header");
+                if (ch < img.channels)
+                    codedMax = std::max(codedMax, (img.maxval - static_cast<uint32_t>(off[ch])) /
+                                                      static_cast<uint32_t>(step[ch]));
+            }
+        }
         const bool packed = rd.get(1) != 0;
         uint32_t packMin = 0, packBytes = 0;
         if (packed) {
             packMin = static_cast<uint32_t>(rd.get(4));
             packBytes = static_cast<uint32_t>(rd.get(4));
-            if (img.channels != 1 || K > 0 || packBytes == 0 || packBytes > 8192 || packMin > img.maxval)
+            if (img.channels != 1 || K > 0 || packBytes == 0 || packBytes > 8192 || packMin > codedMax)
                 throw std::runtime_error("corrupted header");
         }
         const int profile = static_cast<int>(rd.get(1));
@@ -1421,7 +1486,7 @@ std::vector<uint8_t> losslessDecode(const std::vector<uint8_t>& comp, CodecStats
             pl.W = img.width;
             pl.H = img.height;
             pl.C = img.channels;
-            transformRange(t, img.channels, static_cast<int>(img.maxval), pl.lo, pl.hi);
+            transformRange(t, img.channels, static_cast<int>(codedMax), pl.lo, pl.hi);
             for (int ch = 0; ch < 3; ++ch) pl.gshift[ch] = gs[ch];
             pl.profile = profile;
             pl.match = matchOn;
@@ -1431,7 +1496,7 @@ std::vector<uint8_t> losslessDecode(const std::vector<uint8_t>& comp, CodecStats
                 codeBytes(dec, map.data(), map.size());
                 for (uint32_t b = 0; b < packBytes * 8; ++b)
                     if ((map[b >> 3] >> (b & 7)) & 1) values.push_back(static_cast<int32_t>(packMin + b));
-                if (values.size() < 2 || values.back() > static_cast<int32_t>(img.maxval))
+                if (values.size() < 2 || values.back() > static_cast<int32_t>(codedMax))
                     throw std::runtime_error("corrupted data");
                 pl.lo[0] = 0;
                 pl.hi[0] = static_cast<int>(values.size()) - 1;
@@ -1449,6 +1514,11 @@ std::vector<uint8_t> losslessDecode(const std::vector<uint8_t>& comp, CodecStats
                         src = tmp.data();
                     }
                     inverseTransform(t, img.channels, src, row.data(), static_cast<size_t>(img.width));
+                    if (scaled)
+                        for (size_t q = 0; q < m; ++q) {
+                            const int ch = static_cast<int>(q % img.channels);
+                            row[q] = static_cast<uint16_t>(row[q] * step[ch] + off[ch]);
+                        }
                     writeRow(ry, row.data());
                 };
                 codeSamples(sd, pl, nullptr, stripeStart(img.height, S, k), stripeStart(img.height, S, k + 1), &io);

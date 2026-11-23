@@ -104,6 +104,36 @@ Nota: o PNG (optipng) aparece como "não sem perdas" numa RAW de 16 bits porque 
 imagem para 8 bits (todos os valores eram múltiplos de 257). Na prática é sem perdas;
 o nosso script de verificação é que compara a representação. Não afeta o nosso codec.
 
+## 4b. Ponto 4: imagens de 16 bits reais e imagens grandes
+
+Três conjuntos novos, nunca usados para afinar (`scripts/get_more_images.py`), comparados com
+todos os codecs de referência (`results/sota_p4_*.md`). Tudo verificado sem perdas.
+
+| Conjunto | nosso | JPEG-LS | JPEG-XL e7 | JPEG-XL e9 | melhor genérico |
+|---|---|---|---|---|---|
+| Médicas, cinzento 10–15 bits em 16 (5: TAC, RM, radiografia) | **4,032** | 4,467 | 4,189 | 4,141 | 5,309 (bzip2) |
+| Cor 16 bits (4: fotograma 4K e 3 fotogramas de cinema 2K) | **25,65** | 33,15 | 27,33 | 27,19 | 39,26 (xz) |
+| Fotografias 8 bits grandes (3, até 5 Mpix) | 7,176 | 9,164 | 7,054 | **6,788** | 9,073 (bzip2) |
+
+(bpp médio; nas de cor, 48 bpp sem compressão.)
+
+- **Médicas:** melhor em 4 de 5 (o e9 ganha na radiografia RG3 por 3%).
+- **Cor 16 bits:** melhor nas 4. **Problema encontrado e corrigido:** um dos fotogramas
+  (`X_6`) tem dados de 12 bits guardados nos bits altos de 16 bits (todos os valores múltiplos
+  de 16). Só os cinzentos tinham tratamento para isto; na cor gastávamos 4 bits a mais por
+  amostra: **30,57 bpp contra 18,68 do e9**. Novo passo "escala de valores" (por canal,
+  `v = off + k·passo`, codifica-se `k`): **18,50 bpp**. Não mudou nada nas imagens da cadeira
+  nem no conjunto separado (só atua quando todos os valores de um canal estão numa grelha).
+- **Fotografias grandes:** pior do que o e9 nas 3 (−5,7%) e do que o e7 numa (Bretagne2,
+  7,47 contra 6,66). Esta imagem foi, quase de certeza, descodificada de um JPEG (blocos 8×8,
+  croma subamostrado): o JPEG-XL modela melhor esta estrutura. Não se tentou afinar para ela.
+- **Imagem muito grande:** 80,6 Mpix (10368×7776, 242 MB): codificação 65 s / 382 MB,
+  descodificação 63 s / 317 MB, sem perdas. A memória é ~o tamanho do ficheiro + 75–140 MB
+  (o ficheiro inteiro é lido para memória; o resto é processado por linhas).
+- **Velocidade nas de 16 bits:** cerca de 1 Mpix/s (cor) e 3,6 Mpix/s (cinzento) nos dois
+  sentidos; o JPEG-XL e7 descodifica 2,4× mais depressa mas codifica 4× mais devagar e usa
+  10× mais memória (1092 MB contra 107 MB no 4K).
+
 ## 5. O que isto quer dizer para a avaliação
 
 - Taxa de compressão: muito boa. Ao nível do JPEG-XL e7–e9 e muito acima do JPEG-LS, PNG

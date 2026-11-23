@@ -301,4 +301,9 @@ Para cada utilização relevante, responder às perguntas do enunciado: *Qual er
 - **Metodologia:** imagens divididas em desenvolvimento e teste antes de começar; o resultado final foi medido só nas de teste; confirmado que as fotografias não pioram.
 - **Problemas encontrados:** a primeira versão piorava as fotografias em tons de cinzento (+1,4%) e abrandava a descodificação ~40–85%; resolvido com a ativação condicional (por classe de contexto e por imagem).
 
+**Registo (Parte II, ponto 4: imagens de 16 bits e grandes):**
+- **O que foi feito:** 12 imagens novas de fontes públicas (pydicom-data: TAC, RM, radiografias; openjpeg-data: fotogramas de cinema 2K/4K de 16 bits e fotografias grandes), benchmark com todos os codecs, teste com uma imagem de 80 Mpix.
+- **Erro encontrado:** imagens de cor com 12 bits nos bits altos de 16 (valores múltiplos de 16) não eram tratadas (+65% face ao JPEG-XL nesse fotograma). A IA tinha implementado o caso só para cinzentos. Corrigido com a escala de valores por canal (30,57 → 18,50 bpp); 3 imagens de teste novas (149 testes).
+- **Resultado honesto:** melhores do que o JPEG-XL e9 nas imagens de 16 bits (médicas −2,6%, cor −5,7%), piores nas fotografias de 8 bits grandes (+5,7%), sobretudo numa imagem que vem de um JPEG.
+
 > Dica: ir acrescentando aqui uma entrada por cada sessão de trabalho com IA. No fim, o relatório 2 escreve-se quase sozinho.

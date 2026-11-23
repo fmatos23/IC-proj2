@@ -128,6 +128,9 @@ How it works:
   as a palette plus an index image when that is cheaper on the sample; the
   indices are coded with context models of the neighbouring indices mixed by
   logistic mixing (dithered palette images defeat pixel prediction).
+- **Value scaling:** if all the values of a channel are `off + k·step` (e.g.
+  12-bit data in the top bits of 16-bit samples, common in cinema and medical
+  images), `k` is coded instead (step and offset per channel in the header).
 - **Value packing (grey images):** if only some of the values between the
   minimum and the maximum occur, the rank of each value is coded instead (the
   set of values used is sent as a bitmap), when that is cheaper on the sample.
@@ -206,6 +209,8 @@ python3 scripts/benchmark_sota.py --groups pgm8 ppm --repeat 1
 python3 scripts/get_holdout_images.py /tmp/holdout
 # synthetic images (charts, text, screenshots), split in dev/ and test/:
 python3 scripts/get_synthetic_images.py /tmp/synth
+# real 16-bit grey (medical) and colour (cinema 2K/4K) images and large photos:
+python3 scripts/get_more_images.py /tmp/more
 # only our codec, merged with an earlier run of the reference codecs:
 python3 scripts/benchmark_sota.py --codecs ours --merge results/sota_<host>.csv --tag ours
 ```
@@ -226,5 +231,6 @@ tools/charls_cli.cpp         JPEG-LS command line front-end (benchmark only)
 scripts/benchmark_sota.py    Part II.5 benchmark of existing codecs
 scripts/get_holdout_images.py  separate test set (never used for tuning)
 scripts/get_synthetic_images.py synthetic images (dev/ for design, test/ for measuring)
+scripts/get_more_images.py     real 16-bit grey/colour images and large photos (point 4)
 results/                     benchmark results (AVALIACAO.md: honest evaluation)
 ```

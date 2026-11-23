@@ -80,6 +80,14 @@ def main():
             k = ((r % 17) * 17 + (x % 17)) * 3
             rep += tile[k:k + 3] if (r // 17 + x // 17) % 3 else [250, 250, 250]
     add("p6_repeated_pattern.ppm", pnm("P6", 102, 68, 255, rep))
+    # values on a grid (value scaling): 12-bit data in the top bits of 16-bit
+    # samples, a different step and offset per channel, and a grey image
+    s12 = smooth(40, 30, 3, 4095, 16)
+    add("p6_16bit_shifted12.ppm", pnm("P6", 40, 30, 65535, [v << 4 for v in s12]))
+    sg = smooth(40, 30, 3, 900, 17)
+    add("p6_16bit_step_offset.ppm",
+        pnm("P6", 40, 30, 65535, [v * (16, 7, 1)[i % 3] + (3, 5, 0)[i % 3] for i, v in enumerate(sg)]))
+    add("p5_16bit_step10_offset3.pgm", pnm("P5", 40, 30, 65535, [v * 10 + 3 for v in smooth(40, 30, 1, 6000, 18)]))
     # cases that must go through the generic (bytes) mode
     add("p2_ascii.pgm", pnm("P2", 9, 7, 255, smooth(9, 7, 1, 255, 11), comment="ascii"))
     add("p3_ascii.ppm", pnm("P3", 9, 7, 255, smooth(9, 7, 3, 255, 12)))
