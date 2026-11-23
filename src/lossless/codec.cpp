@@ -130,6 +130,9 @@ struct Tune {
     int biasLimit = 256; // halve the bias statistics after this many samples
     int metric = 0;     // 0: activity + residuals; 1: + blend error; 2: blend error only
     int wBlend = 1;     // weight of the blend error in the metric
+    int tex = 3;        // third residual model, context: 0 off, 1 equal neighbours x qb/8, 2 gradients (729), 3 finer gradients (2197)
+    int texSign = 1;    // that model also for the sign
+    int medC = 0;       // MED predictor also in the blend of channels 1-2
 };
 
 Tune loadTune() {
@@ -157,6 +160,9 @@ Tune loadTune() {
                 else if (k == "biasLimit") t.biasLimit = v;
                 else if (k == "metric") t.metric = v;
                 else if (k == "wBlend") t.wBlend = v;
+                else if (k == "tex") t.tex = v;
+                else if (k == "texSign") t.texSign = v;
+                else if (k == "medC") t.medC = v;
                 else if (k == "crossRef") t.crossRef = v;
                 else if (k == "lmsMu") t.lmsMu = v;
                 else if (k == "lmsMu2") t.lmsMu2 = v;
@@ -464,8 +470,9 @@ void codeSamples(Coder& c, Planes& pl, std::vector<double>* chanBits, int r0 = 0
         R[ch] = pl.hi[ch] - pl.lo[ch] + 1;
         half[ch] = R[ch] / 2;
         mid[ch] = pl.lo[ch] + R[ch] / 2;
-        models.emplace_back(half[ch], tp.mix != 0);
-        missModels.emplace_back(half[ch], tp.mix != 0);
+        const int nT = tp.tex == 1 ? 256 : tp.tex == 2 ? 729 : tp.tex == 3 ? 2197 : 0;
+        models.emplace_back(half[ch], tp.mix != 0, nT, tp.texSign != 0);
+        missModels.emplace_back(half[ch], tp.mix != 0, nT, tp.texSign != 0);
     }
     CrossWeight cross[3];
     LMSPair lms[3];
@@ -483,6 +490,7 @@ void codeSamples(Coder& c, Planes& pl, std::vector<double>* chanBits, int r0 = 0
             if (k != 9 && k != 10) predLists[0][nPreds[0]++] = k;
             predLists[1][nPreds[1]++] = k;
         }
+    if (tp.medC && !((tp.predMask >> 4) & 1)) predLists[1][nPreds[1]++] = 4;
 
     const size_t stride = static_cast<size_t>(W) * C;
     std::vector<int> errPrev(stride, 0), errCur(stride, 0);
@@ -749,8 +757,23 @@ void codeSamples(Coder& c, Planes& pl, std::vector<double>* chanBits, int r0 = 0
                 const int lb = bitLength(mb);
                 const int qbv = lb < 2 ? static_cast<int>(mb) : 2 * lb - 2 + static_cast<int>((mb >> (lb - 2)) & 1);
                 const int qb = std::min(qbv, ResidualModel::kCtxB - 1);
+                int tctx = 0;
+                if (tp.tex == 2) {
+                    tctx = static_cast<int>(bctx % 729);
+                } else if (tp.tex == 3) {
+                    auto fq = [&](int dd) {
+                        const int a = (dd < 0 ? -dd : dd) >> gshift[ch];
+                        const int qq = a <= 2 ? a : a <= 4 ? 3 : a <= 8 ? 4 : a <= 20 ? 5 : 6;
+                        return dd < 0 ? -qq : qq;
+                    };
+                    tctx = (fq(NEv - Nv) + 6) * 169 + (fq(Nv - NWv) + 6) * 13 + (fq(NWv - Wv) + 6);
+                } else if (tp.tex) {
+                    const int eqp = (Wv == Nv) | (Wv == NWv) << 1 | (Nv == NWv) << 2 | (Nv == NEv) << 3 |
+                                    (WWv == Wv) << 4 | (NNv == Nv) << 5;
+                    tctx = eqp * 4 + std::min(qb >> 3, 3);
+                }
                 // after a failed match the pixel is "surprising": separate models
-                if (!hit) e = (missed && tp.missModels ? missModels[ch] : models[ch]).code(c, e, q, zctx, sctx, qb);
+                if (!hit) e = (missed && tp.missModels ? missModels[ch] : models[ch]).code(c, e, q, zctx, sctx, qb, tctx);
                 if (!Coder::kEncoding && !hit) {
                     int v = pred + e;
                     if (v < pl.lo[ch]) v += R[ch];

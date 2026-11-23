@@ -162,16 +162,28 @@ public:
     static constexpr int kMantBits = 3;  // modelled mantissa bits (the rest are equiprobable)
 
     // mix = false (fast profile): only the first model, no mixing
-    explicit ResidualModel(int maxAbs, bool mix = true)
+    // tex > 0: a third model for the zero flag, with tex contexts (texture: the
+    // signed local gradients), mixed with the other two (its weight starts at
+    // 0); with texSign the sign is also predicted by two mixed models.
+    explicit ResidualModel(int maxAbs, bool mix = true, int tex = 0, bool texSign = false)
         : mix_(mix),
+          tex_(mix ? tex : 0),
+          texSign_(tex_ && texSign),
+          mixSign_(3, 27, mixRate(), 16),
           maxClass_(bitLength(static_cast<uint32_t>(maxAbs)) - 1),
-          mixZero_(3, kActivityCtx, mixRate(), 16),
+          mixZero_(tex_ ? 4 : 3, kActivityCtx, mixRate(), 16),
           mixCls_(3, (kMaxClass + 1) * 4, mixRate(), 16) {
         for (Mixer* m : {&mixZero_, &mixCls_}) {
             m->initWeight(0, mixInit());
             m->initWeight(1, (1 << 16) - mixInit());
             m->initWeight(2, 0);
         }
+        if (tex_) mixZero_.initWeight(3, 0);
+        mixSign_.initWeight(0, 1 << 16);
+        mixSign_.initWeight(1, 0);
+        mixSign_.initWeight(2, 0);
+        if (texSign_) signT_.resize(static_cast<size_t>(tex_));
+        if (tex_) zeroT_.resize(static_cast<size_t>(tex_));
         zero_.resize(kActivityCtx * 9);
         zeroB_.resize(kCtxB);
         sign_.resize(27);
@@ -184,9 +196,24 @@ public:
     // the prediction), sctx in 0..26,
     // q in 0..kActivityCtx-1, qb in 0..kCtxB-1.
     template <class Coder>
-    int code(Coder& c, int e, int q, int zctx, int sctx, int qb) {
+    int code(Coder& c, int e, int q, int zctx, int sctx, int qb, int tctx = 0) {
+        tz_ = tex_ ? &zeroT_[static_cast<size_t>(tctx)] : nullptr;
         if (mixedBit(c, zero_[q * 9 + zctx], zeroB_[qb], mixZero_, q, e == 0)) return 0;
-        const int neg = codeBit(c, sign_[sctx], e < 0);
+        int neg;
+        if (texSign_) {
+            BitModel& a = sign_[sctx];
+            BitModel& b = signT_[static_cast<size_t>(tctx)];
+            mixSign_.add(stretch(p1of(a)));
+            mixSign_.add(stretch(p1of(b)));
+            mixSign_.add(256);
+            const int p1 = mixSign_.mix(sctx);
+            neg = c.bit(p0from12(p1), e < 0);
+            mixSign_.update(neg);
+            a.update(neg);
+            b.update(neg);
+        } else {
+            neg = codeBit(c, sign_[sctx], e < 0);
+        }
         const uint32_t mag = static_cast<uint32_t>(e < 0 ? -e : e);  // >= 1
 
         // class k: bitLength(mag) - 1, unary, the last 1 can be omitted
@@ -195,6 +222,7 @@ public:
         BitModel* cm = &cls_[q * (kMaxClass + 1)];
         BitModel* cmB = &clsB_[qb * (kMaxClass + 1)];
         const int qs = q >> 3 > 3 ? 3 : q >> 3;
+        tz_ = nullptr;
         while (k < maxClass_ && mixedBit(c, cm[k], cmB[k], mixCls_, k * 4 + qs, k < kEnc)) ++k;
 
         // mantissa: k bits below the leading one
@@ -223,17 +251,23 @@ private:
         mx.add(stretch(p1of(a)));
         mx.add(stretch(p1of(b)));
         mx.add(256);
+        if (tz_) mx.add(stretch(p1of(*tz_)));
         const int p1 = mx.mix(set);
         const int r = c.bit(p0from12(p1), bit);
         mx.update(r);
         a.update(r);
         b.update(r);
+        if (tz_) tz_->update(r);
         return r;
     }
 
     bool mix_;
+    int tex_;
+    bool texSign_;
+    Mixer mixSign_;
     int maxClass_;
-    std::vector<BitModel> zero_, zeroB_, sign_, cls_, clsB_, mant_;
+    BitModel* tz_ = nullptr;
+    std::vector<BitModel> zero_, zeroB_, sign_, cls_, clsB_, mant_, zeroT_, signT_;
     Mixer mixZero_, mixCls_;
 };
 

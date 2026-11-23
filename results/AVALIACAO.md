@@ -111,11 +111,11 @@ todos os codecs de referência (`results/sota_p4_*.md`). Tudo verificado sem per
 
 | Conjunto | nosso | JPEG-LS | JPEG-XL e7 | JPEG-XL e9 | melhor genérico |
 |---|---|---|---|---|---|
-| Médicas, cinzento 10–15 bits em 16 (5: TAC, RM, radiografia) | **4,032** | 4,467 | 4,189 | 4,141 | 5,309 (bzip2) |
-| Cor 16 bits (4: fotograma 4K e 3 fotogramas de cinema 2K) | **25,65** | 33,15 | 27,33 | 27,19 | 39,26 (xz) |
-| Fotografias 8 bits grandes (3, até 5 Mpix) | 7,176 | 9,164 | 7,054 | **6,788** | 9,073 (bzip2) |
+| Médicas, cinzento 10–15 bits em 16 (5: TAC, RM, radiografia) | **4,027** | 4,467 | 4,189 | 4,141 | 5,309 (bzip2) |
+| Cor 16 bits (4: fotograma 4K e 3 fotogramas de cinema 2K) | **25,64** | 33,15 | 27,33 | 27,19 | 39,26 (xz) |
+| Fotografias 8 bits grandes (3, até 5 Mpix) | 7,102 | 9,164 | 7,054 | **6,788** | 9,073 (bzip2) |
 
-(bpp médio; nas de cor, 48 bpp sem compressão.)
+(bpp médio; nas de cor, 48 bpp sem compressão. Valores do nosso codec já com o ponto 5.)
 
 - **Médicas:** melhor em 4 de 5 (o e9 ganha na radiografia RG3 por 3%).
 - **Cor 16 bits:** melhor nas 4. **Problema encontrado e corrigido:** um dos fotogramas
@@ -124,15 +124,47 @@ todos os codecs de referência (`results/sota_p4_*.md`). Tudo verificado sem per
   amostra: **30,57 bpp contra 18,68 do e9**. Novo passo "escala de valores" (por canal,
   `v = off + k·passo`, codifica-se `k`): **18,50 bpp**. Não mudou nada nas imagens da cadeira
   nem no conjunto separado (só atua quando todos os valores de um canal estão numa grelha).
-- **Fotografias grandes:** pior do que o e9 nas 3 (−5,7%) e do que o e7 numa (Bretagne2,
-  7,47 contra 6,66). Esta imagem foi, quase de certeza, descodificada de um JPEG (blocos 8×8,
-  croma subamostrado): o JPEG-XL modela melhor esta estrutura. Não se tentou afinar para ela.
+- **Fotografias grandes:** pior do que o e9 nas 3 (+4,6%) e do que o e7 numa (Bretagne2,
+  7,27 contra 6,66). Esta imagem foi, quase de certeza, descodificada de um JPEG (blocos 8×8,
+  croma subamostrado): ver o ponto 5 abaixo.
 - **Imagem muito grande:** 80,6 Mpix (10368×7776, 242 MB): codificação 65 s / 382 MB,
   descodificação 63 s / 317 MB, sem perdas. A memória é ~o tamanho do ficheiro + 75–140 MB
   (o ficheiro inteiro é lido para memória; o resto é processado por linhas).
 - **Velocidade nas de 16 bits:** cerca de 1 Mpix/s (cor) e 3,6 Mpix/s (cinzento) nos dois
   sentidos; o JPEG-XL e7 descodifica 2,4× mais depressa mas codifica 4× mais devagar e usa
   10× mais memória (1092 MB contra 107 MB no 4K).
+
+## 4c. Ponto 5: imagens descodificadas de JPEG
+
+Separação feita antes de começar (`scripts/get_jpeg_images.py`): **dev** = 7 fotografias do
+conjunto separado comprimidas em JPEG e descodificadas (para desenhar); **teste** = 5 JPEG reais
+dos dados de teste do libjxl + as 3 fotografias grandes do ponto 4 (só para medir).
+
+Diagnóstico: o problema está nos canais de cor (R−G, B−G). Numa imagem de dev, só o canal G
+fica 6% *melhor* do que o JPEG-XL, mas os canais de cor sozinhos ficam 10% piores. Com o
+preditor mais simples possível (W), o JPEG-XL já faz 1,14 bpp nesse canal, contra 1,25 do
+nosso: a vantagem dele está nos contextos (a árvore usa os gradientes exatos), não na
+predição.
+
+Alteração: um 3.º modelo, com os gradientes locais com sinal (NE−N, N−NW, NW−W, 13 níveis cada,
+2197 contextos) como contexto, misturado na decisão "resíduo = 0" e no sinal.
+
+| bpp médio | antes | depois | JPEG-XL e7 | JPEG-XL e9 |
+|---|---|---|---|---|
+| JPEG, dev (7) | 6,449 | 6,417 | 6,259 | 6,227 |
+| **JPEG, teste (8)** | 6,223 | **6,171** (−0,8%) | 6,117 | 5,966 |
+| Cadeira, PGM / PPM | 3,632 / 11,656 | 3,616 / 11,634 | 3,718 / 12,199 | 3,647 / 11,747 |
+| Conjunto separado, PGM / PPM / RAW | 3,308 / 7,868 / 2,762 | 3,303 / 7,843 / 2,758 | | |
+| Sintéticas, teste (15) | 1,700 | 1,685 | 1,702 | 1,495 |
+
+Honestamente: **ganho pequeno** (−0,8% nas JPEG, −0,1 a −0,4% no resto) e **descodificação
+~5–10% mais lenta** (medido no mesmo momento, sem/com o modelo). Continuamos ~3% atrás do e9 e
+~1% atrás do e7 nas imagens vindas de JPEG.
+
+Tentado sem ganho que justificasse (removido do código): modelos separados nas bordas dos blocos
+8×8 (−0,2%), preditores de croma que resolvem R e B a partir de Cb/Cr previstos (ganho só em
+1 de 5 imagens), o preditor MED nos canais de cor (ajuda nas JPEG, piora na cadeira), o 3.º
+modelo também nos bits de classe (+0,15% de ganho por ~10% de tempo).
 
 ## 5. O que isto quer dizer para a avaliação
 

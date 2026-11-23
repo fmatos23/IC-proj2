@@ -304,6 +304,12 @@ Para cada utilização relevante, responder às perguntas do enunciado: *Qual er
 **Registo (Parte II, ponto 4: imagens de 16 bits e grandes):**
 - **O que foi feito:** 12 imagens novas de fontes públicas (pydicom-data: TAC, RM, radiografias; openjpeg-data: fotogramas de cinema 2K/4K de 16 bits e fotografias grandes), benchmark com todos os codecs, teste com uma imagem de 80 Mpix.
 - **Erro encontrado:** imagens de cor com 12 bits nos bits altos de 16 (valores múltiplos de 16) não eram tratadas (+65% face ao JPEG-XL nesse fotograma). A IA tinha implementado o caso só para cinzentos. Corrigido com a escala de valores por canal (30,57 → 18,50 bpp); 3 imagens de teste novas (149 testes).
-- **Resultado honesto:** melhores do que o JPEG-XL e9 nas imagens de 16 bits (médicas −2,6%, cor −5,7%), piores nas fotografias de 8 bits grandes (+5,7%), sobretudo numa imagem que vem de um JPEG.
+- **Resultado honesto:** melhores do que o JPEG-XL e9 nas imagens de 16 bits (médicas −2,6%, cor −5,7%), piores nas fotografias de 8 bits grandes (+5,7%; +4,6% depois do ponto 5), sobretudo numa imagem que vem de um JPEG.
+
+**Registo (Parte II, ponto 5: imagens vindas de JPEG):**
+- **Metodologia:** conjunto de desenvolvimento (JPEG feitos por nós) e de teste (JPEG reais) separados antes de começar.
+- **Diagnóstico com a IA:** separar os canais e comprimi-los sozinhos com os dois codecs mostrou que o problema era só a croma, e que o JPEG-XL ganha pelos contextos (com o preditor W já nos ultrapassa), não pela predição.
+- **Tentativas:** 5 ideias medidas; 1 ficou (3.º modelo com contexto de gradientes para o zero e o sinal). A primeira versão era 20% mais lenta a descodificar por um ganho de 0,15% a mais: reduzida.
+- **Resultado honesto:** −0,8% nas imagens de teste vindas de JPEG, −0,1 a −0,4% nas outras, ~5–10% mais lento a descodificar. A distância ao JPEG-XL e9 nestas imagens passou de ~4% para ~3%; não foi eliminada.
 
 > Dica: ir acrescentando aqui uma entrada por cada sessão de trabalho com IA. No fim, o relatório 2 escreve-se quase sozinho.

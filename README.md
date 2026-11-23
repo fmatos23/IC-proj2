@@ -149,7 +149,10 @@ How it works:
   arithmetic coder. Zero flag and class bits mix (logistic mixing) two models
   with different contexts (local activity + recent residuals + spread of the
   predictions; expected error of the blend + channel-0 residual); the fractional part of the prediction is
-  also used as context for the zero flag and the sign. Probabilities adapt with
+  also used as context for the zero flag and the sign. A third model, with the
+  signed local gradients (NE−N, N−NW, NW−W, 13 levels each) as context, is
+  mixed into the zero flag and the sign (helps on images decoded from JPEG,
+  with piecewise-constant chroma). Probabilities adapt with
   a rate that starts at 1/(n+1.5) and settles at 1/256.
 - **Match model (synthetic images):** a hash table remembers, for each context
   of exact neighbouring pixels (3 window sizes), the pixel that followed it
@@ -211,6 +214,8 @@ python3 scripts/get_holdout_images.py /tmp/holdout
 python3 scripts/get_synthetic_images.py /tmp/synth
 # real 16-bit grey (medical) and colour (cinema 2K/4K) images and large photos:
 python3 scripts/get_more_images.py /tmp/more
+# images decoded from JPEG (dev/ and test/), see results/AVALIACAO.md:
+python3 scripts/get_jpeg_images.py /tmp/holdout /tmp/more /tmp/jpg
 # only our codec, merged with an earlier run of the reference codecs:
 python3 scripts/benchmark_sota.py --codecs ours --merge results/sota_<host>.csv --tag ours
 ```
@@ -232,5 +237,6 @@ scripts/benchmark_sota.py    Part II.5 benchmark of existing codecs
 scripts/get_holdout_images.py  separate test set (never used for tuning)
 scripts/get_synthetic_images.py synthetic images (dev/ for design, test/ for measuring)
 scripts/get_more_images.py     real 16-bit grey/colour images and large photos (point 4)
+scripts/get_jpeg_images.py     images decoded from JPEG (point 5)
 results/                     benchmark results (AVALIACAO.md: honest evaluation)
 ```
